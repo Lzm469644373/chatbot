@@ -1,0 +1,18 @@
+仓库地址: https://github.com/Lzm469644373/chatbot
+提交总数: 9
+
+分支:
+  feat/config-and-chat  9b3ee68 [origin/feat/config-and-chat] feat: 实现命令行多轮对话
+  feat/stream-and-tests 1e7fedd [origin/feat/stream-and-tests] docs: 补充配置项说明与测试章节
+* main                  5b1bc1b [origin/main] Merge pull request #4 from Lzm469644373/feat/stream-and-tests
+
+提交列表:
+5b1bc1b Merge pull request #4 from Lzm469644373/feat/stream-and-tests
+759a9e2 Merge pull request #3 from Lzm469644373/feat/config-and-chat
+1e7fedd docs: 补充配置项说明与测试章节
+875c12f test: 新增配置解析与模型调用单元测试
+361a4be feat: 支持流式输出，边收边打印
+9b3ee68 feat: 实现命令行多轮对话
+85f24ff feat: 封装模型调用，统一从配置读取参数
+284e2e6 feat: 新增 Settings 配置模块并支持 .env 覆盖
+a47df06 chore: 初始化项目结构与依赖声明
