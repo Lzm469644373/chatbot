@@ -1,0 +1,16 @@
+# Runtime dependencies
+# Keep this file ASCII-only: pip reads it with the system locale encoding,
+# and non-ASCII comments break `pip install -r` on Chinese Windows (GBK).
+#
+# openai is pinned below 2.0: 2.x/3.x switch to the httpx2 transport, which
+# currently fails at runtime with
+#   Decompressor.decompress() got an unexpected keyword argument 'output_buffer_limit'
+# 1.x uses the stable httpx transport and works with the chat.completions API
+# this project relies on.
+openai>=1.40,<2.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Development / test
+pytest>=7.4.0
+ruff>=0.5.0
