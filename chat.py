@@ -15,28 +15,10 @@ from collections.abc import Callable
 from openai import APIConnectionError, APIStatusError, AuthenticationError
 
 from config import ConfigError, Settings, load_settings
+from conversation import build_initial_messages, trim_history
 from llm import build_client, create_completion, iter_delta_text
 
 EXIT_WORDS = {"exit", "quit", ":q"}
-
-
-def build_initial_messages(settings: Settings) -> list[dict[str, str]]:
-    """对话初始只有一条 system 消息，它决定了助手的人设。"""
-    return [{"role": "system", "content": settings.system_prompt}]
-
-
-def trim_history(messages: list[dict[str, str]], max_messages: int) -> list[dict[str, str]]:
-    """裁剪历史，但**永远保留 system 消息**。
-
-    只保留最近的 ``max_messages - 1`` 条对话，避免上下文无限增长导致超长报错。
-    """
-    if len(messages) <= max_messages:
-        return messages
-
-    system_messages = [m for m in messages if m["role"] == "system"]
-    dialog = [m for m in messages if m["role"] != "system"]
-    keep = max_messages - len(system_messages)
-    return system_messages + dialog[-keep:]
 
 
 def run_chat(
