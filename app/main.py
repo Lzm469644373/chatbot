@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from openai import APIError
 
-from app.routers import chat, sessions
+from app.routers import chat, sessions, study
 from app.store import SessionStore
 from config import ConfigError, Settings, load_settings
 
@@ -52,6 +52,7 @@ def create_app(
 
     app.include_router(chat.router)
     app.include_router(sessions.router)
+    app.include_router(study.router)
 
     @app.get("/health", tags=["运维"], summary="健康检查（不调用模型）")
     def health() -> dict[str, str]:
