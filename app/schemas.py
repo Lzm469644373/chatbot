@@ -63,3 +63,28 @@ class SessionMessages(BaseModel):
 
     session_id: str
     messages: list[MessageOut]
+
+
+class WordRequest(BaseModel):
+    """``POST /study/word`` 的请求体。"""
+
+    word: str = Field(
+        ...,
+        description="要讲解的英语单词",
+        examples=["resilient"],
+    )
+
+    @field_validator("word")
+    @classmethod
+    def word_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("word 不能为空")
+        return value
+
+
+class WordReply(BaseModel):
+    """``POST /study/word`` 的响应：释义 + 例句，由模型一次生成。"""
+
+    word: str
+    explanation: str

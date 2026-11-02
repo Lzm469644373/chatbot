@@ -56,6 +56,14 @@ def extract_reply(response: Any) -> str:
     return (content or "").strip()
 
 
+def complete_text(client: Any, settings: Settings, messages: list[dict[str, str]]) -> str:
+    """发起一次非流式请求，直接返回完整文本。
+
+    学习功能（单词讲解）这类「一问一答、不需要边生成边显示」的场景用它。
+    """
+    return extract_reply(create_completion(client, settings, messages, stream=False))
+
+
 def iter_delta_text(stream: Iterable[Any]) -> Iterator[str]:
     """从流式响应中逐段取出文本增量。
 

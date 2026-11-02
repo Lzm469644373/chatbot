@@ -50,6 +50,14 @@ class Settings(BaseSettings):
         default="你是一个乐于助人的中文助手，回答简洁准确。",
         description="系统提示词，决定助手的角色设定",
     )
+    study_system_prompt: str = Field(
+        default=(
+            "你是一位耐心的英语老师。用户给你一个英语单词，请用中文讲解："
+            "先给词性和中文释义，再给一个地道例句并附中文翻译。"
+            "回答控制在 150 字以内，不要使用 Markdown 标题。"
+        ),
+        description="学习功能（单词讲解）的系统提示词",
+    )
     max_history_messages: int = Field(
         default=20,
         ge=2,

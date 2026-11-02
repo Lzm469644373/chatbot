@@ -45,3 +45,26 @@ def test_empty_message_is_rejected(api_client):
     for payload in bad_payloads:
         response = api_client.post("/chat", json=payload)
         assert response.status_code == 422, payload
+
+
+def test_study_word_endpoint(api_client, fake_client):
+    """学习功能可通过 API 调用：返回释义，且用的是专属 system 提示词。"""
+    fake_client.reply = "resilient：形容词，有韧性的。例句：She is resilient. 她很有韧性。"
+    response = api_client.post("/study/word", json={"word": "resilient"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "word": "resilient",
+        "explanation": fake_client.reply,
+    }
+
+    call = fake_client.calls[-1]
+    assert call["stream"] is False
+    assert call["messages"][0]["role"] == "system"
+    assert "英语" in call["messages"][0]["content"]
+    assert call["messages"][-1] == {"role": "user", "content": "单词：resilient"}
+
+
+def test_study_word_rejects_blank_word(api_client):
+    for payload in ({"word": ""}, {"word": "   "}, {}):
+        assert api_client.post("/study/word", json=payload).status_code == 422
