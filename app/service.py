@@ -30,6 +30,6 @@ def chat_once(
     response = create_completion(client, settings, messages, stream=False)
     reply = extract_reply(response)
 
-    store.append(session_id, "user", message)
-    store.append(session_id, "assistant", reply)
+    # 一轮对话原子写入，避免并发请求读到「只有提问没有回复」的半截历史
+    store.append_turn(session_id, message, reply)
     return reply

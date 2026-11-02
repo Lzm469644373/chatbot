@@ -30,6 +30,19 @@ class SessionStore:
                 {"role": role, "content": content}
             )
 
+    def append_turn(
+        self, session_id: str, user_content: str, assistant_content: str
+    ) -> None:
+        """把「用户提问 + 助手回复」作为一轮原子写入。
+
+        分两次 append 的话，同一个会话的并发请求可能读到「只有提问没有回复」
+        的半截历史，所以这里在同一把锁内写完。
+        """
+        with self._lock:
+            bucket = self._sessions.setdefault(session_id, [])
+            bucket.append({"role": "user", "content": user_content})
+            bucket.append({"role": "assistant", "content": assistant_content})
+
     def extend(self, session_id: str, messages: list[Message]) -> None:
         """批量追加消息，便于把「用户 + 助手」一轮整体写入。"""
         with self._lock:
