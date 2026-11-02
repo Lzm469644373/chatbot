@@ -32,6 +32,7 @@ def isolated_env(request, monkeypatch):
         "CHATBOT_TEMPERATURE",
         "CHATBOT_MAX_TOKENS",
         "CHATBOT_SYSTEM_PROMPT",
+        "CHATBOT_STUDY_SYSTEM_PROMPT",
         "CHATBOT_MAX_HISTORY_MESSAGES",
         "CHATBOT_STREAM",
         "CHATBOT_REQUEST_TIMEOUT",
