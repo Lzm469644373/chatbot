@@ -24,20 +24,36 @@ def build_client(settings: Settings) -> OpenAI:
 
 
 def create_completion(
-    client: Any, settings: Settings, messages: list[dict[str, str]]
+    client: Any,
+    settings: Settings,
+    messages: list[dict[str, str]],
+    *,
+    stream: bool | None = None,
 ) -> Any:
-    """发起一次对话请求，返回流式响应对象。
+    """发起一次对话请求。
 
-    这里刻意把 model / temperature / stream 显式写出来，
-    便于单元测试断言「确实按配置传参」。
+    ``stream`` 显式传入时以它为准（HTTP 的 ``/chat`` 需要 ``stream=False``，
+    ``/chat/stream`` 需要 ``stream=True``）；不传时沿用 ``CHATBOT_STREAM``。
+    model / temperature / stream 都显式写出来，便于单元测试断言「确实按配置传参」。
     """
+    use_stream = settings.stream if stream is None else stream
     return client.chat.completions.create(
         model=settings.model,
         messages=messages,
         temperature=settings.temperature,
-        stream=settings.stream,
+        stream=use_stream,
         **({"max_tokens": settings.max_tokens} if settings.max_tokens else {}),
     )
+
+
+def extract_reply(response: Any) -> str:
+    """从非流式响应中取出第一条回复文本（没有内容时返回空串）。"""
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
+    message = getattr(choices[0], "message", None)
+    content = getattr(message, "content", None) if message is not None else None
+    return (content or "").strip()
 
 
 def iter_delta_text(stream: Iterable[Any]) -> Iterator[str]:
