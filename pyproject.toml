@@ -1,19 +1,21 @@
 [project]
-name = "chatbot-cli"
-version = "0.2.0"
-description = "命令行聊天机器人：连续对话 + 流式输出，配置由 pydantic-settings 管理"
+name = "chatbot-api"
+version = "1.0.0"
+description = "聊天机器人：命令行 + FastAPI 服务，连续对话、会话管理、流式输出"
 requires-python = ">=3.10"
 dependencies = [
-    "openai>=1.0.0",
+    "openai>=1.40,<2.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4.0", "ruff>=0.5.0"]
+dev = ["pytest>=7.4.0", "httpx>=0.27", "ruff>=0.5.0"]
 
 [tool.pytest.ini_options]
-# 让 tests/ 里可以直接 import config / llm
+# 让 tests/ 里可以直接 import config / llm / app
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
