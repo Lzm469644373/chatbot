@@ -7,7 +7,10 @@
 ## 功能
 
 - **HTTP 对话**：`POST /chat`，同一 `session_id` 自动带上历史，不同会话互不串话。
+- **流式输出**：`POST /chat/stream`，调用模型时 `stream=True`，用 `StreamingResponse`
+  边生成边返回；结束后把完整回复写进历史。
 - **会话管理**：`GET /sessions`、`GET /sessions/{id}/messages`、`DELETE /sessions/{id}`。
+- **学习功能**：`POST /study/word`，输入英文单词返回词性、释义和例句。
 - **配置集中管理**：`config.py` + `pydantic-settings`，`.env` 覆盖，业务代码无硬编码；
   `api_key` 用 `SecretStr` 包装，接口响应里不会出现密钥。
 - **错误处理**：空消息 422、不存在的会话 404、没配 Key 503、模型服务异常 502。
@@ -42,9 +45,11 @@ python chat.py
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `POST` | `/chat` | 普通对话，一次性返回完整回复 |
+| `POST` | `/chat/stream` | 流式对话，逐块返回纯文本 |
 | `GET` | `/sessions` | 查看所有会话 ID |
 | `GET` | `/sessions/{session_id}/messages` | 查看某个会话的消息记录 |
 | `DELETE` | `/sessions/{session_id}` | 清空某个会话 |
+| `POST` | `/study/word` | 学习功能：单词讲解 |
 | `GET` | `/health` | 健康检查（不调用模型） |
 
 ### 对话
@@ -81,12 +86,47 @@ curl -X DELETE http://127.0.0.1:8000/sessions/u1
 # 204 No Content；之后再查该会话返回 404
 ```
 
+### 流式对话
+
+请求体与 `/chat` 完全一样，响应是**逐块返回的纯文本**（不是 JSON），适合边收边显示：
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"u1","message":"用三句话介绍 Python"}'
+```
+
+```text
+Python 是一种简洁易读的编程语言。它常用于数据分析、Web 和人工智能。它的社区和第三方库非常丰富。
+```
+
+> 客户端断开时，已经生成的部分也会被保存到历史里。
+
+### 学习功能：单词讲解
+
+```bash
+curl -X POST http://127.0.0.1:8000/study/word \
+  -H "Content-Type: application/json" \
+  -d '{"word":"resilient"}'
+```
+
+```json
+{
+  "word": "resilient",
+  "explanation": "resilient：形容词，有韧性的、能迅速恢复的。例句：She stayed resilient after the setback. 她在挫折之后依然坚韧。"
+}
+```
+
+这个接口独立于会话，不写入任何 `session_id` 的历史；提示词由
+`CHATBOT_STUDY_SYSTEM_PROMPT` 配置，想换成「英语纠错」「学习小测」只要改提示词和请求字段。
+
 ### 错误约定
 
 | 情况 | 状态码 |
 | --- | --- |
 | `message` 为空 / 全空白，或缺少字段 | `422` |
 | `session_id` 为空 / 全空白 | `422` |
+| `word` 为空 / 全空白 | `422` |
 | 查询或删除不存在的会话 | `404` |
 | 没有配置 `CHATBOT_API_KEY` | `503` |
 | 模型服务连接失败 / 返回错误 | `502` |
@@ -103,6 +143,7 @@ curl -X DELETE http://127.0.0.1:8000/sessions/u1
 | `CHATBOT_TEMPERATURE` | `0.7` | 采样温度，必须在 0~2 之间 |
 | `CHATBOT_MAX_TOKENS` | 空 | 单次回复上限，空表示用服务端默认 |
 | `CHATBOT_SYSTEM_PROMPT` | 内置提示词 | 助手人设 |
+| `CHATBOT_STUDY_SYSTEM_PROMPT` | 内置提示词 | 学习功能（单词讲解）的提示词 |
 | `CHATBOT_MAX_HISTORY_MESSAGES` | `20` | 发送给模型的最大条数（含 system） |
 | `CHATBOT_STREAM` | `true` | 命令行模式是否流式输出 |
 | `CHATBOT_REQUEST_TIMEOUT` | `60` | 请求超时（秒） |
@@ -122,8 +163,9 @@ chatbot/
 │   ├── store.py            # 内存会话存储（以后换数据库只改这里）
 │   ├── service.py          # 业务逻辑：取历史 → 调模型 → 写历史
 │   ├── routers/
-│   │   ├── chat.py         # POST /chat
-│   │   └── sessions.py     # 会话管理接口
+│   │   ├── chat.py         # POST /chat、POST /chat/stream
+│   │   ├── sessions.py     # 会话管理接口
+│   │   └── study.py        # POST /study/word
 │   └── __main__.py         # python -m app
 ├── config.py               # 配置模型 + get_settings()（lru_cache）
 ├── conversation.py         # system 消息、历史裁剪（CLI 与 API 共用）
@@ -133,8 +175,9 @@ chatbot/
 │   ├── conftest.py         # 隔离环境变量 + 假客户端与 app 夹具
 │   ├── test_config.py      # 配置解析、越界校验、SecretStr 掩码
 │   ├── test_llm.py         # mock client，断言传参
-│   ├── test_api_chat.py    # 连续对话、会话隔离、空消息
-│   └── test_api_sessions.py# 会话列表、消息记录、清空、404
+│   ├── test_api_chat.py    # 连续对话、会话隔离、空消息、单词讲解
+│   ├── test_api_sessions.py# 会话列表、消息记录、清空、404
+│   └── test_api_stream.py  # stream=True、流式内容、流式后写入历史
 ├── docs/                   # 运行与测试证据
 ├── .env.example
 ├── .gitignore
@@ -156,8 +199,9 @@ pytest
 | --- | --- |
 | `tests/test_config.py` | 默认值正确、环境变量覆盖、`CHATBOT_TEMPERATURE=5` 抛 `ValidationError`、`SecretStr` 不泄露明文 |
 | `tests/test_llm.py` | mock client 后断言 `model` / `temperature` / `messages` / `stream=True` |
-| `tests/test_api_chat.py` | 同一会话能连续对话、不同会话历史互不混用、空消息被拒绝 |
+| `tests/test_api_chat.py` | 同一会话能连续对话、不同会话历史互不混用、空消息被拒绝、学习功能可调用 |
 | `tests/test_api_sessions.py` | 能查看会话列表与消息记录、清空后不再返回、不存在的会话 404 |
+| `tests/test_api_stream.py` | 模型收到 `stream=True`、流式内容正确返回、结束后完整写入历史 |
 
 ## 设计说明
 
@@ -168,12 +212,20 @@ pytest
 3. **为什么先调模型再写历史**：调用失败时不会在会话里留下「有提问没回答」的半截记录。
 4. **为什么同步路由**：模型 SDK 是同步的，FastAPI 会把 `def` 路由放进线程池，不阻塞事件循环；
    线程安全由 `SessionStore` 内部的 `RLock` 保证。
+5. **为什么流式接口先建流、再返回响应**：`create_completion` 放在 `StreamingResponse`
+   之前调用，连接失败 / Key 无效还能返回正常的 502/503；放进生成器里，响应头已经发出，
+   就只能断开连接了。
+6. **流式为什么也能保存历史**：生成器用 `finally` 把已收到的分片拼起来写入，
+   正常结束、模型报错、客户端断开三种情况都不会漏存。
+7. **学习功能为什么不进会话**：`/study/word` 是独立的一问一答，写入会话反而会污染聊天上下文；
+   需要多轮追问时，调用方可以改用 `/chat` 并自己拼提示词。
 
 ## 开发流程
 
 仓库采用功能分支 + PR 的方式迭代，`main` 分支受保护：
 
 - `feat/fastapi-chat-sessions`：FastAPI 骨架、对话接口、会话管理
+- `feat/fastapi-stream-study`：流式输出、学习功能、流式测试
 - `main`：只通过 PR 合并
 
 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
