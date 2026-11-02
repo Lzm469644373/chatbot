@@ -63,6 +63,12 @@ class Settings(BaseSettings):
         default=60.0, gt=0, description="单次请求超时时间（秒）"
     )
 
+    # ---- HTTP 服务 ----
+    server_host: str = Field(default="127.0.0.1", description="FastAPI 监听地址")
+    server_port: int = Field(
+        default=8000, ge=1, le=65535, description="FastAPI 监听端口"
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
