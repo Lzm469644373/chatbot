@@ -13,6 +13,8 @@
 - **SQLite 持久化**：会话与消息存在 `chat.db`（`sessions` + `messages` 两张表），
   服务重启后通过 API 查到的结果和重启前一致。
 - **会话管理**：`GET /sessions`、`GET /sessions/{id}/messages`、`DELETE /sessions/{id}`。
+- **网页界面**：`GET /` 返回 `static/index.html`（纯 HTML + CSS + 原生 JS），
+  可新建 / 切换 / 删除会话，消息走 `/chat/stream` 逐块渲染。
 - **学习功能**：`POST /study/word`，输入英文单词返回词性、释义和例句。
 - **配置集中管理**：`config.py` + `pydantic-settings`，`.env` 覆盖，业务代码无硬编码；
   `api_key` 用 `SecretStr` 包装，接口响应里不会出现密钥。
@@ -34,7 +36,11 @@ python -m app
 # 或：uvicorn app.main:app --reload
 ```
 
-启动后打开 <http://127.0.0.1:8000/docs> 可以看到自动生成的接口文档（Swagger UI）。
+启动后：
+
+- 打开 <http://127.0.0.1:8000> 就是聊天页面（前端由后端托管）
+- 打开 <http://127.0.0.1:8000/docs> 是自动生成的接口文档（Swagger UI）
+
 Windows 也可以直接双击 `run_server.bat`。
 
 首次启动会自动创建 `chat.db` 并建表（文件不存在时由 SQLite 创建）；
@@ -126,6 +132,19 @@ curl -X POST http://127.0.0.1:8000/study/word \
 这个接口独立于会话，不写入任何 `session_id` 的历史；提示词由
 `CHATBOT_STUDY_SYSTEM_PROMPT` 配置，想换成「英语纠错」「学习小测」只要改提示词和请求字段。
 
+## 网页界面
+
+启动服务后访问 <http://127.0.0.1:8000>，看到的就是 `static/index.html`。
+单文件、内联样式与脚本，没有引入 React / Vue 等任何 CDN 框架。
+
+- 左侧会话栏：`GET /sessions` 拉列表，支持新建、切换、删除（`DELETE /sessions/{id}`）
+- 右侧消息区：`GET /sessions/{id}/messages` 加载历史，发送后走 `POST /chat/stream` 逐块渲染
+- 顶部「清空当前会话」：删除该会话的全部记录
+- 新建会话在本地生成 `s-<时间戳>` 的 ID，发出第一条消息时由后端写入数据库
+
+静态页面与 API 共用一个 FastAPI 应用：所有路由先注册，`StaticFiles` 最后挂到 `/`，
+所以 `/chat`、`/sessions`、`/docs` 不会被静态目录「吞掉」。
+
 ### 错误约定
 
 | 情况 | 状态码 |
@@ -207,7 +226,7 @@ CREATE TABLE messages (
 ```
 chatbot/
 ├── app/                    # FastAPI 服务
-│   ├── main.py             # create_app()：装配路由、异常处理、/health
+│   ├── main.py             # create_app()：路由、异常处理、/health、静态页面挂载
 │   ├── deps.py             # 依赖注入：配置 / 会话存储 / 模型客户端
 │   ├── schemas.py          # 请求与响应模型（空消息在这里被拒绝）
 │   ├── db.py               # SQLite 连接 + 建表语句（ER 图的来源）
@@ -230,6 +249,8 @@ chatbot/
 │   ├── test_api_sessions.py# 会话列表、消息记录、清空、404
 │   ├── test_api_stream.py  # stream=True、流式内容、流式后写入历史
 │   └── test_db.py          # 建表、历史连续、隔离、级联删除、重开库仍在
+├── static/
+│   └── index.html          # 聊天页面（由后端挂载到 /）
 ├── docs/                   # 运行与测试证据
 ├── .env.example
 ├── .gitignore
@@ -255,6 +276,7 @@ pytest
 | `tests/test_api_sessions.py` | 能查看会话列表与消息记录、清空后不再返回、不存在的会话 404 |
 | `tests/test_api_stream.py` | 模型收到 `stream=True`、流式内容正确返回、结束后完整写入历史 |
 | `tests/test_db.py` | 建表成功、同一会话历史连续、不同会话隔离、删除会话后消息级联消失、重新打开数据库数据仍在 |
+| `tests/test_api_web.py` | `GET /` 返回 index.html、页面不含 Key、挂载静态目录后 `/chat` 与 `/docs` 仍正常 |
 
 ## 设计说明
 
@@ -276,6 +298,8 @@ pytest
    正常结束、模型报错、客户端断开三种情况都不会漏存。
 9. **学习功能为什么不进会话**：`/study/word` 是独立的一问一答，写入会话反而会污染聊天上下文；
    需要多轮追问时，调用方可以改用 `/chat` 并自己拼提示词。
+10. **为什么静态目录最后挂载**：Starlette 按注册顺序匹配，`app.mount("/")` 会兜住所有未命中的
+    路径；放在路由之后，`/chat`、`/sessions` 先匹配，页面只在没有接口命中时兜底。
 
 ## 开发流程
 
@@ -284,6 +308,7 @@ pytest
 - `feat/fastapi-chat-sessions`：FastAPI 骨架、对话接口、会话管理
 - `feat/fastapi-stream-study`：流式输出、学习功能、流式测试
 - `feat/db-persistence`：会话存储改为 SQLite + 数据库测试
+- `feat/web-frontend`：聊天页面 + 静态托管 + 前端测试
 - `main`：只通过 PR 合并
 
 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
