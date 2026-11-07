@@ -7,14 +7,19 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from openai import APIError
 
 from app.routers import chat, sessions, study
 from app.store import SessionStore
 from config import ConfigError, Settings, load_settings
+
+# 前端页面目录：chatbot/static/index.html
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
 def create_app(
@@ -72,6 +77,11 @@ def create_app(
     @app.get("/health", tags=["运维"], summary="健康检查（不调用模型）")
     def health() -> dict[str, str]:
         return {"status": "ok", "model": app_settings.model}
+
+    # 静态页面必须最后挂载：先注册 /chat、/sessions 等路由，
+    # 再挂 "/"，否则 StaticFiles 会把接口请求一起吞掉。
+    if STATIC_DIR.is_dir():
+        app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
     return app
 
