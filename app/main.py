@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from openai import APIError
@@ -24,19 +26,32 @@ def create_app(
     """构造应用。
 
     ``settings`` / ``store`` / ``client`` 都可以注入，测试时传入假对象，
-    就能在完全离线、没有真实 Key 的情况下跑通所有接口。
+    就能在完全离线、没有真实 Key、也不碰真实数据库的情况下跑通所有接口。
     """
     app_settings = settings or load_settings()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # 启动时按配置打开 SQLite 并自动建表；不传 store 时在这里创建，
+        # 这样 import app.main 本身不会产生数据库文件。
+        store_instance = app.state.store
+        if store_instance is None:
+            store_instance = SessionStore(app_settings.db_path)
+            app.state.store = store_instance
+        yield
+        store_instance.close()
+
     app = FastAPI(
         title="聊天机器人 API",
-        version="1.0.0",
+        version="2.0.0",
         description=(
-            "把命令行聊天机器人改造成 HTTP 服务："
-            "连续对话、内存会话管理、流式输出。"
+            "聊天机器人 HTTP 服务：连续对话、SQLite 会话持久化、"
+            "流式输出，以及由后端托管的网页聊天界面。"
         ),
+        lifespan=lifespan,
     )
     app.state.settings = app_settings
-    app.state.store = store or SessionStore()
+    app.state.store = store
     app.state.client = client
 
     @app.exception_handler(ConfigError)

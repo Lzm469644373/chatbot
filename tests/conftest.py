@@ -24,6 +24,11 @@ def isolated_env(request, monkeypatch):
     workdir = Path(tempfile.gettempdir()) / "chatbot-tests" / safe_name
     workdir.mkdir(parents=True, exist_ok=True)
 
+    # 目录按用例名复用，上一次运行留下的 SQLite 文件必须清掉，
+    # 否则「新用例」会读到旧数据（内存存储时代不存在这个问题）。
+    for stale in workdir.glob("*.db*"):
+        stale.unlink()
+
     monkeypatch.chdir(workdir)
     for name in (
         "CHATBOT_API_KEY",
@@ -38,6 +43,7 @@ def isolated_env(request, monkeypatch):
         "CHATBOT_REQUEST_TIMEOUT",
         "CHATBOT_SERVER_HOST",
         "CHATBOT_SERVER_PORT",
+        "CHATBOT_DB_PATH",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -101,11 +107,10 @@ def fake_client():
 
 @pytest.fixture
 def api_app(settings, fake_client):
-    """每个用例一个全新的 app：内存会话不会互相污染。"""
+    """每个用例一个全新的 app；数据库文件落在各自的临时目录里。"""
     from app.main import create_app
-    from app.store import SessionStore
 
-    return create_app(settings=settings, store=SessionStore(), client=fake_client)
+    return create_app(settings=settings, client=fake_client)
 
 
 @pytest.fixture
