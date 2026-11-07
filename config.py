@@ -71,6 +71,12 @@ class Settings(BaseSettings):
         default=60.0, gt=0, description="单次请求超时时间（秒）"
     )
 
+    # ---- 存储 ----
+    db_path: str = Field(
+        default="chat.db",
+        description="SQLite 数据库文件路径；测试里指向临时文件或 :memory:",
+    )
+
     # ---- HTTP 服务 ----
     server_host: str = Field(default="127.0.0.1", description="FastAPI 监听地址")
     server_port: int = Field(
