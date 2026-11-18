@@ -129,16 +129,22 @@ class SessionStore:
 
     # ---------- 读 ----------
 
-    def get(self, session_id: str) -> list[Message] | None:
-        """按对话顺序返回消息；会话不存在时返回 ``None``。"""
+    def get(self, session_id: str, keyword: str | None = None) -> list[Message] | None:
+        """按对话顺序返回消息；会话不存在时返回 ``None``。
+
+        传入 ``keyword`` 时只返回内容包含该关键词的消息（仍按原顺序），
+        过滤用 SQLAlchemy 的 ORM 查询表达式完成：
+        ``ChatMessage.content.contains(keyword, autoescape=True)`` 会生成带 ``LIKE`` 的 SQL。
+        """
         with self._session_factory() as db:
             if db.get(ChatSession, session_id) is None:
                 return None
-            stmt = (
-                select(ChatMessage)
-                .where(ChatMessage.session_id == session_id)
-                .order_by(ChatMessage.id)
-            )
+            stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
+            if keyword:
+                stmt = stmt.where(
+                    ChatMessage.content.contains(keyword, autoescape=True)
+                )
+            stmt = stmt.order_by(ChatMessage.id)
             return [
                 {"role": message.role, "content": message.content}
                 for message in db.scalars(stmt)
