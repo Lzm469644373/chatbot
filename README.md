@@ -61,7 +61,7 @@ python chat.py
 | `POST` | `/chat` | 普通对话，一次性返回完整回复 |
 | `POST` | `/chat/stream` | 流式对话，逐块返回纯文本 |
 | `GET` | `/sessions` | 查看所有会话 ID |
-| `GET` | `/sessions/{session_id}/messages` | 查看某个会话的消息记录 |
+| `GET` | `/sessions/{session_id}/messages` | 查看某个会话的消息记录（可选 `keyword` 过滤） |
 | `DELETE` | `/sessions/{session_id}` | 清空某个会话 |
 | `POST` | `/study/word` | 学习功能：单词讲解 |
 | `GET` | `/health` | 健康检查（不调用模型） |
@@ -99,6 +99,22 @@ curl http://127.0.0.1:8000/sessions/u1/messages
 curl -X DELETE http://127.0.0.1:8000/sessions/u1
 # 204 No Content；之后再查该会话返回 404
 ```
+
+### 关键词查找历史消息
+
+`GET /sessions/{session_id}/messages` 支持可选的 `keyword` 参数：
+
+```bash
+# 完整历史
+curl http://127.0.0.1:8000/sessions/u1/messages
+
+# 只返回当前会话中内容包含「Python」的消息，顺序与原历史一致
+curl "http://127.0.0.1:8000/sessions/u1/messages?keyword=Python"
+```
+
+- 关键词只在该 `session_id` 内查找，不会串到别的会话；
+- 不传（或传空白）返回完整历史；
+- 没有匹配时返回 `{"session_id": "...", "messages": []}`，会话不存在仍然是 404。
 
 ### 流式对话
 
@@ -220,6 +236,35 @@ CREATE TABLE messages (
   任何一条失败都会整体回滚；`test_failed_turn_rolls_back_and_keeps_old_history` 覆盖了这个场景。
 - 每次数据库操作都 `with self._session_factory() as db:` 开一个短生命周期 Session，用完自动关闭。
 
+### 一条 ORM 查询与对应的 SQL
+
+关键词查询（`app/store.py` 的 `SessionStore.get`）：
+
+```python
+stmt = (
+    select(ChatMessage)
+    .where(ChatMessage.session_id == session_id)
+    .where(ChatMessage.content.contains(keyword, autoescape=True))
+    .order_by(ChatMessage.id)
+)
+messages = db.scalars(stmt).all()
+```
+
+SQLAlchemy 把它编译成下面这条 SQL（参数是绑定的，不是字符串拼接）：
+
+```sql
+SELECT messages.id, messages.session_id, messages.role, messages.content, messages.created_at
+FROM messages
+WHERE messages.session_id = :session_id_1
+  AND (messages.content LIKE '%' || :content_1 || '%' ESCAPE '/')
+ORDER BY messages.id;
+```
+
+两者的关系：ORM 表达式是「用 Python 对象描述 SQL」——`select(ChatMessage)` 对应 `SELECT 列`，
+`.where()` 对应 `WHERE`，`contains()` 对应 `LIKE '%...%'`，`order_by()` 对应 `ORDER BY`。
+`autoescape=True` 会把关键词里的 `%`、`_` 转义并加上 `ESCAPE '/'`，避免用户输入被当成通配符；
+SQLAlchemy 负责生成列名和绑定参数，所以既保留了 SQL 的表达能力，又不用手写易错的字符串 SQL。
+
 ## 配置项
 
 全部配置位于 `config.py` 的 `Settings`，环境变量统一带 `CHATBOT_` 前缀。
@@ -299,6 +344,7 @@ pytest
 | `tests/test_api_stream.py` | 模型收到 `stream=True`、流式内容正确返回、结束后完整写入历史 |
 | `tests/test_db.py` | 建表成功、同一会话历史连续、不同会话隔离、删除会话后消息级联消失、重新打开数据库数据仍在、旧库兼容、事务回滚 |
 | `tests/test_api_web.py` | `GET /` 返回 index.html、页面不含 Key、挂载静态目录后 `/chat` 与 `/docs` 仍正常 |
+| `tests/test_api_search.py` | 不传关键词返回完整历史、传入后只返回当前会话的匹配消息且顺序不变、无匹配返回空列表、未知会话 404 |
 
 ## 设计说明
 
@@ -334,6 +380,7 @@ pytest
 - `feat/db-persistence`：会话存储改为 SQLite + 数据库测试
 - `feat/web-frontend`：聊天页面 + 静态托管 + 前端测试
 - `feat/orm-store`：SQLAlchemy ORM 模型与存储模块重构
+- `feat/message-search`：历史消息关键词查询、测试与文档
 - `main`：只通过 PR 合并
 
 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
