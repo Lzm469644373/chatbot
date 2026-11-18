@@ -12,6 +12,8 @@
   边生成边返回；结束后把完整回复写进历史。
 - **SQLite 持久化**：会话与消息存在 `chat.db`（`sessions` + `messages` 两张表），
   服务重启后通过 API 查到的结果和重启前一致。
+- **SQLAlchemy ORM**：`ChatSession` / `ChatMessage` 两个声明式模型映射两张表，
+  存储层不再手写 SQL；旧 `chat.db` 可直接打开，无需迁移。
 - **会话管理**：`GET /sessions`、`GET /sessions/{id}/messages`、`DELETE /sessions/{id}`。
 - **网页界面**：`GET /` 返回 `static/index.html`（纯 HTML + CSS + 原生 JS），
   可新建 / 切换 / 删除会话，消息走 `/chat/stream` 逐块渲染。
@@ -199,6 +201,25 @@ CREATE TABLE messages (
   以后换成 MySQL / PostgreSQL 不需要改路由。
 - `*.db` 已写入 `.gitignore`，仓库里不保存数据库文件；测试用临时目录里的库。
 
+## ORM 模型（SQLAlchemy 2.x）
+
+表结构没有变，只是把 `sqlite3` 手写 SQL 换成 SQLAlchemy 2.x 声明式模型，
+所以第四次作业留下的 `chat.db` 可以直接打开，不需要迁移。
+
+| ORM 类 | 对应表 | 字段与关系 |
+| --- | --- | --- |
+| `ChatSession`（`app/models.py`） | `sessions` | `id`（主键）、`created_at`；`messages` 一对多 |
+| `ChatMessage`（`app/models.py`） | `messages` | `id`（主键，自增）、`session_id`（外键 → `sessions.id`）、`role`、`content`、`created_at`；`session` 多对一 |
+
+- 关系用 `relationship(back_populates=...)` 双向绑定；`ChatSession.messages` 设了
+  `cascade="all, delete-orphan"`，数据库层还有 `ON DELETE CASCADE` 兜底。
+- **不会清空旧数据**：启动时 `Base.metadata.create_all()` 只补建缺失的表，不 `DROP`、不清空。
+  `tests/test_db.py::test_reads_legacy_database_created_by_previous_version` 用第四次作业的
+  建表 SQL 造了一个旧库，验证 ORM 能直接读出记录。
+- **事务**：`SessionStore.append_turn()` 在同一个 Session 里提交「用户消息 + 助手回复」，
+  任何一条失败都会整体回滚；`test_failed_turn_rolls_back_and_keeps_old_history` 覆盖了这个场景。
+- 每次数据库操作都 `with self._session_factory() as db:` 开一个短生命周期 Session，用完自动关闭。
+
 ## 配置项
 
 全部配置位于 `config.py` 的 `Settings`，环境变量统一带 `CHATBOT_` 前缀。
@@ -229,8 +250,9 @@ chatbot/
 │   ├── main.py             # create_app()：路由、异常处理、/health、静态页面挂载
 │   ├── deps.py             # 依赖注入：配置 / 会话存储 / 模型客户端
 │   ├── schemas.py          # 请求与响应模型（空消息在这里被拒绝）
-│   ├── db.py               # SQLite 连接 + 建表语句（ER 图的来源）
-│   ├── store.py            # SQLite 会话存储（路由只调用这里）
+│   ├── models.py           # SQLAlchemy ORM：ChatSession / ChatMessage
+│   ├── db.py               # Engine、Session 工厂、create_all（不删旧表）
+│   ├── store.py            # ORM 会话存储（路由只调用这里）
 │   ├── service.py          # 业务逻辑：取历史 → 调模型 → 写历史
 │   ├── routers/
 │   │   ├── chat.py         # POST /chat、POST /chat/stream
@@ -275,7 +297,7 @@ pytest
 | `tests/test_api_chat.py` | 同一会话能连续对话、不同会话历史互不混用、空消息被拒绝、学习功能可调用 |
 | `tests/test_api_sessions.py` | 能查看会话列表与消息记录、清空后不再返回、不存在的会话 404 |
 | `tests/test_api_stream.py` | 模型收到 `stream=True`、流式内容正确返回、结束后完整写入历史 |
-| `tests/test_db.py` | 建表成功、同一会话历史连续、不同会话隔离、删除会话后消息级联消失、重新打开数据库数据仍在 |
+| `tests/test_db.py` | 建表成功、同一会话历史连续、不同会话隔离、删除会话后消息级联消失、重新打开数据库数据仍在、旧库兼容、事务回滚 |
 | `tests/test_api_web.py` | `GET /` 返回 index.html、页面不含 Key、挂载静态目录后 `/chat` 与 `/docs` 仍正常 |
 
 ## 设计说明
@@ -286,9 +308,9 @@ pytest
    假客户端即可，完全不碰网络和真实 `.env`。
 3. **为什么先调模型再写历史**：调用失败时不会在会话里留下「有提问没回答」的半截记录。
 4. **为什么同步路由**：模型 SDK 是同步的，FastAPI 会把 `def` 路由放进线程池，不阻塞事件循环；
-   线程安全由 `SessionStore` 内部的 `RLock` 保证。
-5. **为什么一个连接 + 一把锁**：SQLite 的写操作本身就是串行的，FastAPI 的同步路由又在线程池里
-   并发执行；单连接配 `RLock` 最简单，也兼容 `:memory:`。
+   数据库层用「每次操作一个短生命周期 Session」保证线程安全，不共享连接。
+5. **为什么用 ORM**：表结构写进模型，查询用 `select()` 表达式而不是字符串 SQL，字段改名时
+   更容易发现问题；`create_all` 只补建缺失的表，第四次作业的旧库可以直接用。
 6. **为什么启动时才建表**：建表放进 lifespan 而不是 import 阶段，`import app.main` 不会凭空
    生成 `chat.db`，测试也能用临时目录里的库。
 7. **为什么流式接口先建流、再返回响应**：`create_completion` 放在 `StreamingResponse`
@@ -300,6 +322,8 @@ pytest
    需要多轮追问时，调用方可以改用 `/chat` 并自己拼提示词。
 10. **为什么静态目录最后挂载**：Starlette 按注册顺序匹配，`app.mount("/")` 会兜住所有未命中的
     路径；放在路由之后，`/chat`、`/sessions` 先匹配，页面只在没有接口命中时兜底。
+11. **为什么事务放在 `append_turn`**：用户消息和助手回复必须同生共死；两条记录在同一个 Session
+    里 commit，失败时 rollback，不会留下「只有提问没有回复」的半轮对话。
 
 ## 开发流程
 
@@ -309,6 +333,7 @@ pytest
 - `feat/fastapi-stream-study`：流式输出、学习功能、流式测试
 - `feat/db-persistence`：会话存储改为 SQLite + 数据库测试
 - `feat/web-frontend`：聊天页面 + 静态托管 + 前端测试
+- `feat/orm-store`：SQLAlchemy ORM 模型与存储模块重构
 - `main`：只通过 PR 合并
 
 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
