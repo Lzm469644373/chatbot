@@ -1,52 +1,57 @@
-"""SQLite 连接与建表语句。
+"""SQLAlchemy 引擎、Session 工厂与建表。
 
-把「怎么连库」和「表结构」集中在这里，``app/store.py`` 只负责业务语义的
-增删查改。以后换成 MySQL / PostgreSQL 时，替换这个模块和 store 里的 SQL 即可，
-路由层完全不用动。
+- ``build_engine``：按数据库路径创建 Engine，并给每个连接打开 SQLite 外键约束；
+- ``build_session_factory``：生成 Session 工厂，store 的每次操作都从它开一个 Session；
+- ``init_schema``：``create_all``，只补建缺失的表，绝不 DROP 或清空已有数据。
 """
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
-# 两张表：会话表 + 消息表，消息通过外键指向会话。
-# README 里的 mermaid ER 图必须和这里的字段、类型、主外键保持一致。
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS sessions (
-    id         TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
-CREATE TABLE IF NOT EXISTS messages (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    role       TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-    content    TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
-"""
+from app.models import Base
 
 
-def connect(db_path: str) -> sqlite3.Connection:
-    """打开数据库连接；文件不存在时 SQLite 会自动创建。
+def build_engine(db_path: str) -> Engine:
+    """创建 SQLite Engine。
 
-    ``check_same_thread=False`` 配合 store 里的锁使用：FastAPI 的同步路由
-    跑在线程池里，同一个连接会被不同线程访问。
+    ``:memory:`` 用 StaticPool 让所有 Session 共用同一个内存连接，
+    否则每次连接都会拿到一个空库。
     """
-    if db_path != ":memory:":
-        Path(db_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+    if db_path == ":memory:":
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+    else:
+        path = Path(db_path).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        engine = create_engine(
+            f"sqlite:///{path.as_posix()}",
+            connect_args={"check_same_thread": False},
+        )
 
-    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    # SQLite 默认不检查外键，必须显式打开，ON DELETE CASCADE 才会生效
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    # SQLite 默认不检查外键，必须每个连接显式打开，ON DELETE CASCADE 才会生效
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.close()
+
+    return engine
 
 
-def init_schema(conn: sqlite3.Connection) -> None:
-    """建表 + 建索引；已存在时不会重复创建（启动时自动执行）。"""
-    conn.executescript(SCHEMA)
-    conn.commit()
+def build_session_factory(engine: Engine) -> sessionmaker[Session]:
+    """Session 工厂：每次数据库操作创建一个短生命周期 Session。"""
+    return sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+
+def init_schema(engine: Engine) -> None:
+    """建表；表已存在时跳过，不会影响已有聊天记录。"""
+    Base.metadata.create_all(engine)
