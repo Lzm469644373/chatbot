@@ -7,7 +7,26 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from app.store import SessionStore
+
+# 第四次作业用原生 SQL 建的库，用来验证 ORM 能直接读旧数据
+LEGACY_SCHEMA = """
+CREATE TABLE sessions (
+    id         TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_messages_session ON messages(session_id, id);
+"""
 
 
 def test_tables_and_columns_are_created(tmp_path):
@@ -110,3 +129,46 @@ def test_unknown_session_returns_none(tmp_path):
         assert store.get("nope") is None
         assert store.exists("nope") is False
         assert store.delete("nope") is False
+
+
+def test_reads_legacy_database_created_by_previous_version(tmp_path):
+    """旧库兼容：第四次作业用原生 SQL 建的表，ORM 能直接读，不会清空。"""
+    db_file = tmp_path / "legacy.db"
+    with sqlite3.connect(db_file) as conn:
+        conn.executescript(LEGACY_SCHEMA)
+        conn.execute("INSERT INTO sessions (id) VALUES ('old')")
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content) VALUES ('old', 'user', '旧问题')"
+        )
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content) VALUES ('old', 'assistant', '旧回答')"
+        )
+
+    with SessionStore(str(db_file)) as store:
+        assert store.get("old") == [
+            {"role": "user", "content": "旧问题"},
+            {"role": "assistant", "content": "旧回答"},
+        ]
+        assert store.list_ids() == ["old"]
+
+
+def test_failed_turn_rolls_back_and_keeps_old_history(tmp_path):
+    """事务：一轮对话写入失败时整体回滚，不留半轮，也不破坏原有历史。"""
+    with SessionStore(str(tmp_path / "transaction.db")) as store:
+        store.append_turn("u1", "第一轮问题", "第一轮回答")
+
+        with pytest.raises(IntegrityError):
+            # content 是 NOT NULL，传 None 会让第二条插入失败
+            store.append_turn("u1", "第二轮问题", None)  # type: ignore[arg-type]
+
+        assert store.get("u1") == [
+            {"role": "user", "content": "第一轮问题"},
+            {"role": "assistant", "content": "第一轮回答"},
+        ]
+
+        # 新会话整轮失败时，连会话行也不应该留下
+        with pytest.raises(IntegrityError):
+            store.append_turn("u2", "新会话的问题", None)  # type: ignore[arg-type]
+
+        assert store.exists("u2") is False
+        assert store.list_ids() == ["u1"]
