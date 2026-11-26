@@ -22,8 +22,15 @@ venv/
 *.db-wal
 *.db-shm
 
+# ---- 前端 ----
+node_modules/
+dist/
+dist-ssr/
+*.local
+
 # ---- 编辑器 ----
-.vscode/
+# 只忽略仓库根目录的 .vscode；frontend/ 里的 .vscode 交给它自己的 .gitignore
+/.vscode/
 .idea/
 *.swp
 
